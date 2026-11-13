@@ -1,0 +1,103 @@
+generator client {
+  provider = "prisma-client"
+  output   = "../lib/generated/prisma"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+enum AccountRole {
+  admin
+  user
+}
+
+enum VerificationPurpose {
+  password_reset
+}
+
+model Account {
+  id           String      @id @default(cuid())
+  email        String      @unique
+  passwordHash String?
+  googleId     String?     @unique
+  name         String?
+  avatarUrl    String?
+  role         AccountRole @default(user)
+  /// Bumped to invalidate every issued session JWT (password reset, "log out everywhere").
+  tokenVersion Int         @default(0)
+  createdAt    DateTime    @default(now())
+  updatedAt    DateTime    @updatedAt
+
+  vaults             Vault[]
+  verificationTokens VerificationToken[]
+}
+
+/// One-time codes (OTP) emailed to the user. `token` is an HMAC of the code, never the code itself.
+model VerificationToken {
+  id        String              @id @default(cuid())
+  accountId String
+  purpose   VerificationPurpose
+  token     String
+  attempts  Int                 @default(0)
+  expiresAt DateTime
+  usedAt    DateTime?
+  createdAt DateTime            @default(now())
+  account   Account             @relation(fields: [accountId], references: [id], onDelete: Cascade)
+
+  @@index([accountId, purpose])
+}
+
+/// A named bundle of secrets (keys, env vars) plus rich-text docs.
+model Vault {
+  id          String   @id @default(cuid())
+  ownerId     String
+  name        String
+  description String?
+  /// Encrypted Tiptap JSON document.
+  notesEnc    String?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  owner      Account     @relation(fields: [ownerId], references: [id], onDelete: Cascade)
+  secrets    Secret[]
+  shareLinks ShareLink[]
+
+  @@index([ownerId])
+}
+
+model Secret {
+  id        String   @id @default(cuid())
+  vaultId   String
+  key       String
+  /// AES-256-GCM encrypted value: iv.tag.ciphertext (base64url)
+  valueEnc  String
+  note      String?
+  position  Int      @default(0)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  vault Vault @relation(fields: [vaultId], references: [id], onDelete: Cascade)
+
+  @@unique([vaultId, key])
+}
+
+model ShareLink {
+  id             String    @id @default(cuid())
+  vaultId        String
+  label          String?
+  /// sha256 of the URL token. The raw token is only shown once, on creation.
+  tokenHash      String    @unique
+  passwordHash   String?
+  expiresAt      DateTime?
+  maxViews       Int?
+  viewCount      Int       @default(0)
+  failedAttempts Int       @default(0)
+  revokedAt      DateTime?
+  lastViewedAt   DateTime?
+  createdAt      DateTime  @default(now())
+
+  vault Vault @relation(fields: [vaultId], references: [id], onDelete: Cascade)
+
+  @@index([vaultId])
+}
